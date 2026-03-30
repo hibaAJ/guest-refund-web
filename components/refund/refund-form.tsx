@@ -25,11 +25,15 @@ const REFUND_REASONS = [
   { value: 'other', label: 'Other' },
 ]
 
+const fieldClass =
+  'flex h-9 w-full rounded-lg border border-input bg-white px-3 py-2 text-sm text-gray-900 outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700'
+
 export function RefundForm() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submittedData, setSubmittedData] = useState<RefundRequest | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [dateValue, setDateValue] = useState('')
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   const {
     register,
@@ -47,6 +51,7 @@ export function RefundForm() {
 
   const onSubmit = async (data: RefundFormData) => {
     setIsSubmitting(true)
+    setSubmitError(null)
     try {
       let fileUrl: string | null = null
 
@@ -77,7 +82,7 @@ export function RefundForm() {
 
       if (error) throw new Error(error.message)
 
-      // Build success object from submitted data since anon role cannot SELECT
+      // Build success data locally — anon role has INSERT only, not SELECT
       const successData: RefundRequest = {
         id: crypto.randomUUID(),
         created_at: new Date().toISOString(),
@@ -96,6 +101,7 @@ export function RefundForm() {
       }, 800)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Submission failed. Please try again.'
+      setSubmitError(msg)
       toast.error('Submission Failed', { description: msg })
     } finally {
       setIsSubmitting(false)
@@ -165,7 +171,7 @@ export function RefundForm() {
             )}
           </div>
 
-          {/* Booking Date — native date input */}
+          {/* Booking Date */}
           <div className="space-y-1.5">
             <Label htmlFor="booking_date">
               Booking Date <span className="text-destructive">*</span>
@@ -179,37 +185,27 @@ export function RefundForm() {
                 const raw = e.target.value
                 setDateValue(raw)
                 if (raw) {
-                  const parsed = new Date(raw + 'T00:00:00')
-                  setValue('booking_date', parsed, { shouldValidate: true })
+                  setValue('booking_date', new Date(raw + 'T00:00:00'), { shouldValidate: true })
                 }
               }}
-              className={cn(
-                'flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30',
-                !!errors.booking_date && 'border-destructive'
-              )}
+              className={cn(fieldClass, !!errors.booking_date && 'border-destructive')}
             />
             {errors.booking_date && (
               <p className="text-sm text-destructive">{errors.booking_date.message}</p>
             )}
           </div>
 
-          {/* 90-day warning banner */}
+          {/* 90-day warning banner — exact text from spec */}
           {showWarning && (
             <div className="flex items-start gap-3 rounded-lg border border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30 dark:border-yellow-600 p-4">
               <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
-                  Booking is over 90 days old
-                </p>
-                <p className="text-sm text-yellow-700 dark:text-yellow-400 mt-0.5">
-                  Refund requests for bookings older than 90 days may require additional review and
-                  are subject to our extended refund policy.
-                </p>
-              </div>
+              <p className="text-sm text-yellow-800 dark:text-yellow-300">
+                Your booking is outside the standard refund window. Your request will be reviewed on a case-by-case basis.
+              </p>
             </div>
           )}
 
-          {/* Refund Reason — native select */}
+          {/* Refund Reason */}
           <div className="space-y-1.5">
             <Label htmlFor="refund_reason">
               Refund Reason <span className="text-destructive">*</span>
@@ -225,10 +221,7 @@ export function RefundForm() {
                   })
                 }
               }}
-              className={cn(
-                'flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30',
-                !!errors.refund_reason && 'border-destructive'
-              )}
+              className={cn(fieldClass, !!errors.refund_reason && 'border-destructive')}
             >
               <option value="" disabled>Select a reason</option>
               {REFUND_REASONS.map((r) => (
@@ -278,15 +271,13 @@ export function RefundForm() {
               ) : (
                 <div className="flex flex-col items-center gap-2 py-2">
                   <Upload className="h-6 w-6 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground text-center">
-                    Click to upload receipt or invoice
-                    <br />
-                    <span className="text-xs">JPEG, PNG, WebP, PDF · Max 5MB</span>
-                  </span>
+                  <p className="text-sm text-muted-foreground text-center">
+                    JPEG, PNG, WebP, PDF · Max 5MB
+                  </p>
                   <input
                     type="file"
                     accept=".jpg,.jpeg,.png,.webp,.pdf"
-                    className="mt-1 text-sm text-muted-foreground file:mr-3 file:rounded file:border-0 file:bg-muted file:px-3 file:py-1 file:text-sm file:font-medium file:cursor-pointer cursor-pointer"
+                    className="text-sm text-muted-foreground file:mr-3 file:rounded file:border-0 file:bg-muted file:px-3 file:py-1 file:text-sm file:font-medium file:cursor-pointer cursor-pointer"
                     onChange={(e) => {
                       const file = e.target.files?.[0]
                       if (file) {
@@ -302,6 +293,13 @@ export function RefundForm() {
               <p className="text-sm text-destructive">{errors.file.message as string}</p>
             )}
           </div>
+
+          {/* Inline submission error — more visible than toast alone */}
+          {submitError && (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <strong>Submission failed:</strong> {submitError}
+            </div>
+          )}
 
           <Button type="submit" className="w-full" disabled={isSubmitting}>
             {isSubmitting ? 'Submitting...' : 'Submit Refund Request'}
