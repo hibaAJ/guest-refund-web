@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { format } from 'date-fns'
-import { CalendarIcon, AlertTriangle, Upload, X } from 'lucide-react'
+import { AlertTriangle, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { refundSchema, type RefundFormData } from '@/lib/validations'
 import { supabase } from '@/lib/supabase'
@@ -14,15 +14,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Calendar } from '@/components/ui/calendar'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { RefundSuccessScreen } from './success-screen'
 import type { RefundRequest } from '@/lib/supabase'
 
@@ -38,6 +29,7 @@ export function RefundForm() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submittedData, setSubmittedData] = useState<RefundRequest | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [dateValue, setDateValue] = useState('')
 
   const {
     register,
@@ -58,7 +50,7 @@ export function RefundForm() {
     try {
       let fileUrl: string | null = null
 
-      if (data.file && selectedFile) {
+      if (selectedFile) {
         const ext = selectedFile.name.split('.').pop()
         const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
         const { error: uploadError } = await supabase.storage
@@ -81,17 +73,21 @@ export function RefundForm() {
         file_url: fileUrl,
       }
 
-      const { data: inserted, error } = await supabase
-        .from('refund_requests')
-        .insert(payload)
-        .select()
-        .single()
+      const { error } = await supabase.from('refund_requests').insert(payload)
 
       if (error) throw new Error(error.message)
 
-      setSubmittedData(inserted as RefundRequest)
+      // Build success object from submitted data since anon role cannot SELECT
+      const successData: RefundRequest = {
+        id: crypto.randomUUID(),
+        created_at: new Date().toISOString(),
+        ...payload,
+      }
+
+      setSubmittedData(successData)
       reset()
       setSelectedFile(null)
+      setDateValue('')
 
       setTimeout(() => {
         toast.success('Email Confirmation Sent', {
@@ -121,6 +117,7 @@ export function RefundForm() {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-5">
+
           {/* Full Name */}
           <div className="space-y-1.5">
             <Label htmlFor="full_name">
@@ -168,33 +165,29 @@ export function RefundForm() {
             )}
           </div>
 
-          {/* Booking Date */}
+          {/* Booking Date — native date input */}
           <div className="space-y-1.5">
-            <Label>
+            <Label htmlFor="booking_date">
               Booking Date <span className="text-destructive">*</span>
             </Label>
-            <Popover>
-              <PopoverTrigger
-                className={cn(
-                  'flex h-8 w-full items-center justify-start gap-2 rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm whitespace-nowrap transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30',
-                  !bookingDate && 'text-muted-foreground'
-                )}
-              >
-                <CalendarIcon className="h-4 w-4 shrink-0" />
-                {bookingDate ? format(bookingDate, 'PPP') : 'Pick a date'}
-              </PopoverTrigger>
-              <PopoverContent align="start">
-                <Calendar
-                  mode="single"
-                  selected={bookingDate}
-                  onSelect={(date) =>
-                    setValue('booking_date', date as Date, { shouldValidate: true })
-                  }
-                  disabled={(date) => date > new Date()}
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
+            <input
+              id="booking_date"
+              type="date"
+              value={dateValue}
+              max={format(new Date(), 'yyyy-MM-dd')}
+              onChange={(e) => {
+                const raw = e.target.value
+                setDateValue(raw)
+                if (raw) {
+                  const parsed = new Date(raw + 'T00:00:00')
+                  setValue('booking_date', parsed, { shouldValidate: true })
+                }
+              }}
+              className={cn(
+                'flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30',
+                !!errors.booking_date && 'border-destructive'
+              )}
+            />
             {errors.booking_date && (
               <p className="text-sm text-destructive">{errors.booking_date.message}</p>
             )}
@@ -216,31 +209,32 @@ export function RefundForm() {
             </div>
           )}
 
-          {/* Refund Reason */}
+          {/* Refund Reason — native select */}
           <div className="space-y-1.5">
-            <Label>
+            <Label htmlFor="refund_reason">
               Refund Reason <span className="text-destructive">*</span>
             </Label>
-            <Select
-              onValueChange={(val) => {
-                if (val !== null) {
+            <select
+              id="refund_reason"
+              defaultValue=""
+              onChange={(e) => {
+                const val = e.target.value
+                if (val) {
                   setValue('refund_reason', val as RefundFormData['refund_reason'], {
                     shouldValidate: true,
                   })
                 }
               }}
+              className={cn(
+                'flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30',
+                !!errors.refund_reason && 'border-destructive'
+              )}
             >
-              <SelectTrigger aria-invalid={!!errors.refund_reason} className="w-full">
-                <SelectValue placeholder="Select a reason" />
-              </SelectTrigger>
-              <SelectContent>
-                {REFUND_REASONS.map((r) => (
-                  <SelectItem key={r.value} value={r.value}>
-                    {r.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <option value="" disabled>Select a reason</option>
+              {REFUND_REASONS.map((r) => (
+                <option key={r.value} value={r.value}>{r.label}</option>
+              ))}
+            </select>
             {errors.refund_reason && (
               <p className="text-sm text-destructive">{errors.refund_reason.message}</p>
             )}
@@ -270,21 +264,19 @@ export function RefundForm() {
                   <span className="text-sm text-muted-foreground truncate max-w-[80%]">
                     {selectedFile.name}
                   </span>
-                  <Button
+                  <button
                     type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0"
                     onClick={() => {
                       setSelectedFile(null)
                       setValue('file', undefined)
                     }}
+                    className="ml-2 shrink-0 rounded p-1 hover:bg-muted"
                   >
                     <X className="h-4 w-4" />
-                  </Button>
+                  </button>
                 </div>
               ) : (
-                <label className="flex flex-col items-center gap-2 cursor-pointer py-2">
+                <div className="flex flex-col items-center gap-2 py-2">
                   <Upload className="h-6 w-6 text-muted-foreground" />
                   <span className="text-sm text-muted-foreground text-center">
                     Click to upload receipt or invoice
@@ -293,8 +285,8 @@ export function RefundForm() {
                   </span>
                   <input
                     type="file"
-                    className="sr-only"
                     accept=".jpg,.jpeg,.png,.webp,.pdf"
+                    className="mt-1 text-sm text-muted-foreground file:mr-3 file:rounded file:border-0 file:bg-muted file:px-3 file:py-1 file:text-sm file:font-medium file:cursor-pointer cursor-pointer"
                     onChange={(e) => {
                       const file = e.target.files?.[0]
                       if (file) {
@@ -303,7 +295,7 @@ export function RefundForm() {
                       }
                     }}
                   />
-                </label>
+                </div>
               )}
             </div>
             {errors.file && (
