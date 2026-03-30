@@ -1,16 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
 import { format } from 'date-fns'
 import { AlertTriangle, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { refundSchema, type RefundFormData } from '@/lib/validations'
 import { supabase } from '@/lib/supabase'
-import { isOver90DaysAgo, cn } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -28,30 +24,90 @@ const REFUND_REASONS = [
 const fieldClass =
   'flex h-9 w-full rounded-lg border border-input bg-white px-3 py-2 text-sm text-gray-900 outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 dark:bg-zinc-900 dark:text-zinc-100 dark:border-zinc-700'
 
+type FormErrors = Partial<Record<string, string>>
+
+function isOver90DaysAgo(dateStr: string): boolean {
+  const date = new Date(dateStr + 'T00:00:00')
+  const ninetyDaysAgo = new Date()
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+  return date < ninetyDaysAgo
+}
+
 export function RefundForm() {
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [bookingRef, setBookingRef] = useState('')
+  const [bookingDate, setBookingDate] = useState('')
+  const [refundReason, setRefundReason] = useState('')
+  const [details, setDetails] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+
+  const [errors, setErrors] = useState<FormErrors>({})
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submittedData, setSubmittedData] = useState<RefundRequest | null>(null)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [dateValue, setDateValue] = useState('')
-  const [submitError, setSubmitError] = useState<string | null>(null)
 
-  const {
-    register,
-    handleSubmit,
-    setValue,
-    watch,
-    formState: { errors },
-    reset,
-  } = useForm<RefundFormData>({
-    resolver: zodResolver(refundSchema),
-  })
+  const showWarning = bookingDate !== '' && isOver90DaysAgo(bookingDate)
 
-  const bookingDate = watch('booking_date')
-  const showWarning = bookingDate && isOver90DaysAgo(bookingDate)
+  function validate(): FormErrors {
+    const e: FormErrors = {}
 
-  const onSubmit = async (data: RefundFormData) => {
-    setIsSubmitting(true)
+    if (!fullName.trim()) {
+      e.fullName = 'Full name is required'
+    } else if (fullName.trim().length < 2) {
+      e.fullName = 'Full name must be at least 2 characters'
+    } else if (!/^[a-zA-Z\s'-]+$/.test(fullName.trim())) {
+      e.fullName = 'Full name contains invalid characters'
+    }
+
+    if (!email.trim()) {
+      e.email = 'Email address is required'
+    } else if (!/^[^@]+@[^@]+\.[^@]+$/.test(email.trim())) {
+      e.email = 'Please enter a valid email address'
+    }
+
+    if (!bookingRef.trim()) {
+      e.bookingRef = 'Booking reference is required'
+    } else if (!/^[a-zA-Z0-9-_]+$/.test(bookingRef.trim())) {
+      e.bookingRef = 'Booking reference contains invalid characters'
+    }
+
+    if (!bookingDate) {
+      e.bookingDate = 'Please select a booking date'
+    } else if (new Date(bookingDate + 'T00:00:00') > new Date()) {
+      e.bookingDate = 'Booking date cannot be in the future'
+    }
+
+    if (!refundReason) {
+      e.refundReason = 'Please select a refund reason'
+    }
+
+    if (details.length > 2000) {
+      e.details = 'Details must be under 2000 characters'
+    }
+
+    if (selectedFile) {
+      if (selectedFile.size > 5 * 1024 * 1024) e.file = 'File must be under 5MB'
+      else if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(selectedFile.type)) {
+        e.file = 'File must be JPEG, PNG, WebP, or PDF'
+      }
+    }
+
+    return e
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
     setSubmitError(null)
+
+    const errs = validate()
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs)
+      return
+    }
+    setErrors({})
+    setIsSubmitting(true)
+
     try {
       let fileUrl: string | null = null
 
@@ -69,20 +125,18 @@ export function RefundForm() {
       }
 
       const payload = {
-        full_name: data.full_name.trim(),
-        email: data.email.toLowerCase().trim(),
-        booking_ref: data.booking_ref.trim().toUpperCase(),
-        booking_date: format(data.booking_date, 'yyyy-MM-dd'),
-        refund_reason: data.refund_reason,
-        details: data.details?.trim() || null,
+        full_name: fullName.trim(),
+        email: email.toLowerCase().trim(),
+        booking_ref: bookingRef.trim().toUpperCase(),
+        booking_date: bookingDate,
+        refund_reason: refundReason,
+        details: details.trim() || null,
         file_url: fileUrl,
       }
 
       const { error } = await supabase.from('refund_requests').insert(payload)
-
       if (error) throw new Error(error.message)
 
-      // Build success data locally — anon role has INSERT only, not SELECT
       const successData: RefundRequest = {
         id: crypto.randomUUID(),
         created_at: new Date().toISOString(),
@@ -90,13 +144,10 @@ export function RefundForm() {
       }
 
       setSubmittedData(successData)
-      reset()
-      setSelectedFile(null)
-      setDateValue('')
 
       setTimeout(() => {
         toast.success('Email Confirmation Sent', {
-          description: `A confirmation has been sent to ${data.email}`,
+          description: `A confirmation has been sent to ${email}`,
         })
       }, 800)
     } catch (err) {
@@ -108,8 +159,21 @@ export function RefundForm() {
     }
   }
 
+  function resetForm() {
+    setFullName('')
+    setEmail('')
+    setBookingRef('')
+    setBookingDate('')
+    setRefundReason('')
+    setDetails('')
+    setSelectedFile(null)
+    setErrors({})
+    setSubmitError(null)
+    setSubmittedData(null)
+  }
+
   if (submittedData) {
-    return <RefundSuccessScreen data={submittedData} onReset={() => setSubmittedData(null)} />
+    return <RefundSuccessScreen data={submittedData} onReset={resetForm} />
   }
 
   return (
@@ -122,22 +186,22 @@ export function RefundForm() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-5">
+        <form onSubmit={handleSubmit} noValidate className="space-y-5">
 
           {/* Full Name */}
           <div className="space-y-1.5">
             <Label htmlFor="full_name">
               Full Name <span className="text-destructive">*</span>
             </Label>
-            <Input
+            <input
               id="full_name"
+              type="text"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
               placeholder="Jane Smith"
-              {...register('full_name')}
-              aria-invalid={!!errors.full_name}
+              className={cn(fieldClass, errors.fullName && 'border-destructive')}
             />
-            {errors.full_name && (
-              <p className="text-sm text-destructive">{errors.full_name.message}</p>
-            )}
+            {errors.fullName && <p className="text-sm text-destructive">{errors.fullName}</p>}
           </div>
 
           {/* Email */}
@@ -145,14 +209,15 @@ export function RefundForm() {
             <Label htmlFor="email">
               Email Address <span className="text-destructive">*</span>
             </Label>
-            <Input
+            <input
               id="email"
               type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               placeholder="jane@example.com"
-              {...register('email')}
-              aria-invalid={!!errors.email}
+              className={cn(fieldClass, errors.email && 'border-destructive')}
             />
-            {errors.email && <p className="text-sm text-destructive">{errors.email.message}</p>}
+            {errors.email && <p className="text-sm text-destructive">{errors.email}</p>}
           </div>
 
           {/* Booking Reference */}
@@ -160,15 +225,15 @@ export function RefundForm() {
             <Label htmlFor="booking_ref">
               Booking Reference <span className="text-destructive">*</span>
             </Label>
-            <Input
+            <input
               id="booking_ref"
+              type="text"
+              value={bookingRef}
+              onChange={(e) => setBookingRef(e.target.value)}
               placeholder="BK-123456"
-              {...register('booking_ref')}
-              aria-invalid={!!errors.booking_ref}
+              className={cn(fieldClass, errors.bookingRef && 'border-destructive')}
             />
-            {errors.booking_ref && (
-              <p className="text-sm text-destructive">{errors.booking_ref.message}</p>
-            )}
+            {errors.bookingRef && <p className="text-sm text-destructive">{errors.bookingRef}</p>}
           </div>
 
           {/* Booking Date */}
@@ -179,23 +244,15 @@ export function RefundForm() {
             <input
               id="booking_date"
               type="date"
-              value={dateValue}
+              value={bookingDate}
               max={format(new Date(), 'yyyy-MM-dd')}
-              onChange={(e) => {
-                const raw = e.target.value
-                setDateValue(raw)
-                if (raw) {
-                  setValue('booking_date', new Date(raw + 'T00:00:00'), { shouldValidate: true })
-                }
-              }}
-              className={cn(fieldClass, !!errors.booking_date && 'border-destructive')}
+              onChange={(e) => setBookingDate(e.target.value)}
+              className={cn(fieldClass, errors.bookingDate && 'border-destructive')}
             />
-            {errors.booking_date && (
-              <p className="text-sm text-destructive">{errors.booking_date.message}</p>
-            )}
+            {errors.bookingDate && <p className="text-sm text-destructive">{errors.bookingDate}</p>}
           </div>
 
-          {/* 90-day warning banner — exact text from spec */}
+          {/* 90-day warning banner */}
           {showWarning && (
             <div className="flex items-start gap-3 rounded-lg border border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30 dark:border-yellow-600 p-4">
               <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 shrink-0 mt-0.5" />
@@ -212,25 +269,16 @@ export function RefundForm() {
             </Label>
             <select
               id="refund_reason"
-              defaultValue=""
-              onChange={(e) => {
-                const val = e.target.value
-                if (val) {
-                  setValue('refund_reason', val as RefundFormData['refund_reason'], {
-                    shouldValidate: true,
-                  })
-                }
-              }}
-              className={cn(fieldClass, !!errors.refund_reason && 'border-destructive')}
+              value={refundReason}
+              onChange={(e) => setRefundReason(e.target.value)}
+              className={cn(fieldClass, errors.refundReason && 'border-destructive')}
             >
               <option value="" disabled>Select a reason</option>
               {REFUND_REASONS.map((r) => (
                 <option key={r.value} value={r.value}>{r.label}</option>
               ))}
             </select>
-            {errors.refund_reason && (
-              <p className="text-sm text-destructive">{errors.refund_reason.message}</p>
-            )}
+            {errors.refundReason && <p className="text-sm text-destructive">{errors.refundReason}</p>}
           </div>
 
           {/* Additional Details */}
@@ -238,14 +286,13 @@ export function RefundForm() {
             <Label htmlFor="details">Additional Details</Label>
             <Textarea
               id="details"
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
               placeholder="Please describe your situation in detail..."
               rows={4}
-              {...register('details')}
-              aria-invalid={!!errors.details}
+              className={cn(errors.details && 'border-destructive')}
             />
-            {errors.details && (
-              <p className="text-sm text-destructive">{errors.details.message}</p>
-            )}
+            {errors.details && <p className="text-sm text-destructive">{errors.details}</p>}
           </div>
 
           {/* File Upload */}
@@ -259,10 +306,7 @@ export function RefundForm() {
                   </span>
                   <button
                     type="button"
-                    onClick={() => {
-                      setSelectedFile(null)
-                      setValue('file', undefined)
-                    }}
+                    onClick={() => setSelectedFile(null)}
                     className="ml-2 shrink-0 rounded p-1 hover:bg-muted"
                   >
                     <X className="h-4 w-4" />
@@ -280,21 +324,16 @@ export function RefundForm() {
                     className="text-sm text-muted-foreground file:mr-3 file:rounded file:border-0 file:bg-muted file:px-3 file:py-1 file:text-sm file:font-medium file:cursor-pointer cursor-pointer"
                     onChange={(e) => {
                       const file = e.target.files?.[0]
-                      if (file) {
-                        setSelectedFile(file)
-                        setValue('file', file, { shouldValidate: true })
-                      }
+                      if (file) setSelectedFile(file)
                     }}
                   />
                 </div>
               )}
             </div>
-            {errors.file && (
-              <p className="text-sm text-destructive">{errors.file.message as string}</p>
-            )}
+            {errors.file && <p className="text-sm text-destructive">{errors.file}</p>}
           </div>
 
-          {/* Inline submission error — more visible than toast alone */}
+          {/* Inline submission error */}
           {submitError && (
             <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               <strong>Submission failed:</strong> {submitError}
